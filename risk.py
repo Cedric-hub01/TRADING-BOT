@@ -126,9 +126,12 @@ class RiskManager:
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    def estimate_pnl(self, entry: float, exit_price: float) -> float:
-        """USD PnL for a long position closed at exit_price."""
-        pips = (exit_price - entry) / PIP_SIZE
+    def estimate_pnl(self, entry: float, exit_price: float, side: str = "buy") -> float:
+        """USD PnL for a long or short position closed at exit_price."""
+        if side == "sell":
+            pips = (entry - exit_price) / PIP_SIZE
+        else:
+            pips = (exit_price - entry) / PIP_SIZE
         return round(pips * PIP_VALUE_STD * LOT_SIZE, 2)
 
     def status(self) -> str:

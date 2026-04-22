@@ -1,17 +1,18 @@
 """
-EURUSD EMA 8/21/50 Crossover Bot  —  RisenFX / TradeLocker.
+EURUSD trading bot  —  RisenFX / TradeLocker.
 
-Strategy : EMA8 × EMA21 crossover, EMA50 trend filter, long only.
-SL / TP  : ATR-based (1.5× SL, 3.0× TP) — enforced by a 60-second
-           price-monitor that closes the position via a market SELL when
-           the live price hits SL or TP.  No pending stop / limit orders.
+Strategy is pluggable via config.py (STRATEGY_TYPE / STRATEGY_PARAMS / DIRECTION);
+every 60 s the bot either:
+
+    • monitors the open position — closes via an opposite-side market order when
+      the live price hits the ATR-based SL or TP (real execution, not pending
+      orders), OR
+    • scans for a new entry using the live strategy signal.
 
 Why monitor-and-close?
-----------------------
 RisenFX demo does not let us attach SL/TP to a market fill and PATCH on
 positions returns 404.  Separate stop / limit orders are only PENDING — they
-can fail to execute during spreads, gaps or weekend rollovers.  A live market
-SELL guarantees the exit fills.
+can fail to execute.  A live market SELL/BUY guarantees the exit fills.
 
 Usage:
     python bot.py
@@ -27,6 +28,7 @@ from datetime import datetime
 
 from config import (
     SCAN_INTERVAL, CANDLES_NEEDED, SYMBOL, TIMEFRAME, LOT_SIZE,
+    STRATEGY_TYPE, DIRECTION,
 )
 from tradelocker import TradeLockerAPI
 from strategy    import build_dataframe, get_signal
@@ -45,7 +47,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# ── Persistent trade record (entry / SL / TP for the monitor) ─────────────────
+# ── Persistent trade record (entry / SL / TP / side for the monitor) ──────────
 _POS_FILE = "open_trade.json"
 
 _running = True
@@ -59,10 +61,11 @@ def _shutdown(sig, frame):
 
 # ── Trade persistence ─────────────────────────────────────────────────────────
 
-def _save_trade(entry: float, sl: float, tp: float):
+def _save_trade(side: str, entry: float, sl: float, tp: float):
     with open(_POS_FILE, "w") as f:
         json.dump(
             {
+                "side":  side,                        # "buy" | "sell"
                 "entry": entry,
                 "sl":    sl,
                 "tp":    tp,
@@ -98,7 +101,7 @@ def run():
     risk = RiskManager()
 
     log.info("=" * 60)
-    log.info("EURUSD EMA Crossover Bot  —  starting up (price-monitor SL/TP)")
+    log.info(f"EURUSD bot — strategy={STRATEGY_TYPE}  direction={DIRECTION}")
     log.info(f"Symbol: {SYMBOL}  |  Timeframe: {TIMEFRAME}m  |  Lot: {LOT_SIZE}")
     log.info("=" * 60)
 
@@ -125,7 +128,6 @@ def run():
 
             # ── Branch B: flat → look for a new entry ─────────────────────
             else:
-                # Did we just close? Record the trade result first.
                 saved = _load_trade()
                 if saved:
                     _handle_closed_trade(saved, risk)
@@ -144,21 +146,18 @@ def run():
     log.info("Bot stopped cleanly.")
 
 
-# ── SL / TP monitor ───────────────────────────────────────────────────────────
+# ── SL / TP monitor (side-aware) ──────────────────────────────────────────────
 
 def _monitor_position(api: TradeLockerAPI, risk: RiskManager, position: dict, ts: str):
-    """
-    Every 60 s while a position is open: check live price against the saved
-    SL / TP and close via market SELL if either is breached.
-    """
     saved = _load_trade()
     if saved is None:
         log.warning(
             f"[{ts}] Open position exists but no local SL/TP record — "
-            "cannot monitor.  Close or restart with a trade record in place."
+            "cannot monitor.  Close manually or restart with a trade record."
         )
         return
 
+    side  = saved.get("side", "buy")
     entry = saved["entry"]
     sl    = saved["sl"]
     tp    = saved["tp"]
@@ -169,20 +168,21 @@ def _monitor_position(api: TradeLockerAPI, risk: RiskManager, position: dict, ts
         return
 
     log.info(
-        f"[{ts}] MONITOR price={price:.5f}  entry={entry:.5f}  "
+        f"[{ts}] MONITOR {side.upper()} price={price:.5f}  entry={entry:.5f}  "
         f"SL={sl:.5f}  TP={tp:.5f}  {risk.status()}"
     )
 
-    hit = None
-    if price <= sl:
-        hit = "SL"
-    elif price >= tp:
-        hit = "TP"
+    # Long: SL is below entry, TP above.  Short: inverted.
+    if side == "buy":
+        hit = "SL" if price <= sl else "TP" if price >= tp else None
+    else:
+        hit = "SL" if price >= sl else "TP" if price <= tp else None
 
     if hit is None:
         return
 
-    log.info(f"[{ts}] {hit} HIT at {price:.5f} — closing position via market SELL")
+    opposite = "sell" if side == "buy" else "buy"
+    log.info(f"[{ts}] {hit} HIT at {price:.5f} — closing via market {opposite.upper()}")
     try:
         resp = api.close_position(position)
         log.info(f"Close order response: {resp}")
@@ -190,8 +190,7 @@ def _monitor_position(api: TradeLockerAPI, risk: RiskManager, position: dict, ts
         log.error(f"Close failed — will retry next cycle: {exc}")
         return
 
-    # Record actual PnL from the price where SL/TP was hit.
-    pnl = risk.estimate_pnl(entry, price)
+    pnl = risk.estimate_pnl(entry, price, side=side)
     risk.record_close(pnl)
     _clear_trade()
 
@@ -215,22 +214,18 @@ def _scan_for_entry(api: TradeLockerAPI, risk: RiskManager, ts: str):
     if signal_dir is None:
         last = df.iloc[-2]
         log.info(
-            f"[{ts}] No signal | "
-            f"price={last['close']:.5f}  "
-            f"EMA8={last['ema_fast']:.5f}  "
-            f"EMA21={last['ema_med']:.5f}  "
-            f"EMA50={last['ema_slow']:.5f}  "
-            f"ATR={atr_val:.5f}"
+            f"[{ts}] No signal [{STRATEGY_TYPE}] | "
+            f"price={last['close']:.5f}  ATR={atr_val:.5f}"
         )
         return
 
-    entry_price = df["close"].iloc[-2]
+    entry_price = float(df["close"].iloc[-2])
     sl_distance = abs(entry_price - sl_price)
 
     if not risk.check_trade_risk(sl_distance):
         return
 
-    _place_trade(api, risk, entry_price, sl_price, tp_price)
+    _place_trade(api, risk, signal_dir, entry_price, sl_price, tp_price)
 
 
 # ── Order placement ───────────────────────────────────────────────────────────
@@ -238,17 +233,18 @@ def _scan_for_entry(api: TradeLockerAPI, risk: RiskManager, ts: str):
 def _place_trade(
     api: TradeLockerAPI,
     risk: RiskManager,
+    side: str,
     entry_price: float,
     sl_price: float,
     tp_price: float,
 ):
     log.info(
-        f"Entering LONG | est_entry={entry_price:.5f}  "
+        f"Entering {side.upper()} | est_entry={entry_price:.5f}  "
         f"SL={sl_price:.5f}  TP={tp_price:.5f}"
     )
 
     try:
-        resp = api.place_market_order(side="buy", qty=LOT_SIZE)
+        resp = api.place_market_order(side=side, qty=LOT_SIZE)
         log.info(f"Market order filled: {resp}")
     except Exception as exc:
         log.error(f"Market order failed — no position opened: {exc}")
@@ -257,7 +253,7 @@ def _place_trade(
     # Small pause so the fill registers before the next positions call
     time.sleep(2)
 
-    _save_trade(entry_price, sl_price, tp_price)
+    _save_trade(side, entry_price, sl_price, tp_price)
     risk.record_entry()
     log.info(f"Trade recorded — SL/TP will be enforced by the monitor loop.  {risk.status()}")
 
@@ -272,8 +268,8 @@ def _handle_closed_trade(saved: dict, risk: RiskManager):
     outside the monitor (manual close, server-side liquidation, etc).
     """
     log.info(
-        f"Position closed out-of-band (entry={saved['entry']:.5f}  "
-        f"SL={saved['sl']:.5f}  TP={saved['tp']:.5f}).  "
+        f"Position closed out-of-band (side={saved.get('side','?')}  "
+        f"entry={saved['entry']:.5f}  SL={saved['sl']:.5f}  TP={saved['tp']:.5f}).  "
         "PnL not captured — recording $0.  Check broker dashboard for real result."
     )
     risk.record_close(0.0)

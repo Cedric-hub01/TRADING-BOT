@@ -1,110 +1,123 @@
 """
-EMA 8 / 21 / 50 crossover strategy with ATR-based SL/TP.
+Live-trading strategy dispatcher.
 
-Signal rules (Long Only):
-  Entry  : EMA8 crosses above EMA21 on the last *completed* bar
-            AND EMA8 > EMA50  AND  EMA21 > EMA50  (trend filter)
-  SL     : entry_price − ATR_SL_MULT × ATR
-  TP     : entry_price + ATR_TP_MULT × ATR  (default 3:1 RR)
+Reads STRATEGY_TYPE / STRATEGY_PARAMS / DIRECTION from config.py and delegates
+signal generation to the shared library in backtest_strategies.py, so the live
+bot and the backtester use *exactly* the same logic.
+
+Return value: (side, sl_price, tp_price, atr_value)
+    side is "buy" | "sell" | None
+    sl/tp are absolute prices derived from ATR (1.5× SL, 3.0× TP)
 """
 
 import logging
 import pandas as pd
 
 from config import (
-    EMA_FAST, EMA_MED, EMA_SLOW,
+    STRATEGY_TYPE, STRATEGY_PARAMS, DIRECTION,
     ATR_PERIOD, ATR_SL_MULT, ATR_TP_MULT,
 )
+import backtest_strategies as lib
 
 log = logging.getLogger(__name__)
 
 
-# ── Indicator helpers ─────────────────────────────────────────────────────────
+_BUILDERS = {
+    "ema_cross":        lambda p: lib.ema_cross(p["fast"], p["med"], p["slow"], p.get("trend_filter", False)),
+    "macd":             lambda p: lib.macd_cross(p["fast"], p["slow"], p["signal"]),
+    "supertrend":       lambda p: lib.supertrend_flip(p["period"], p["mult"]),
+    "ichimoku":         lambda p: lib.ichimoku_tk(p["tenkan"], p["kijun"], p["senkou"]),
+    "rsi_reversion":    lambda p: lib.rsi_reversion(p["period"], p["os"], p["ob"]),
+    "bb_reversion":     lambda p: lib.bb_reversion(p["period"], p["k"]),
+    "bb_breakout":      lambda p: lib.bb_breakout(p["period"], p["k"]),
+    "stoch_reversion":  lambda p: lib.stoch_reversion(p["k"], p["d"], p["smooth"], p["os"], p["ob"]),
+    "ema_adx":          lambda p: lib.ema_cross_adx(p["fast"], p["slow"], p["adx_period"], p["adx_min"]),
+    "session_breakout": lambda p: lib.session_breakout(
+        p["session"], p["lookback_minutes"], p["duration_minutes"], p["bar_minutes"]
+    ),
+}
 
-def _ema(series: pd.Series, period: int) -> pd.Series:
-    return series.ewm(span=period, adjust=False).mean()
 
-
-def _wilder_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int) -> pd.Series:
-    """Wilder's Average True Range (alpha = 1/period, same as TradingView default)."""
-    prev_close = close.shift(1)
-    tr = pd.concat(
-        [high - low, (high - prev_close).abs(), (low - prev_close).abs()],
-        axis=1,
-    ).max(axis=1)
-    return tr.ewm(alpha=1.0 / period, adjust=False).mean()
+def _build_strategy():
+    try:
+        return _BUILDERS[STRATEGY_TYPE](STRATEGY_PARAMS)
+    except KeyError:
+        raise RuntimeError(f"Unknown STRATEGY_TYPE '{STRATEGY_TYPE}' in config.py")
 
 
 # ── DataFrame builder ─────────────────────────────────────────────────────────
 
 def build_dataframe(bar_data: dict) -> pd.DataFrame | None:
     """
-    Convert the raw TradeLocker barData dict to a DataFrame with indicators.
-
-    bar_data expected keys: "o", "h", "l", "c", "v", "t"
-    Returns None if bar_data is missing or has too few rows.
+    Convert raw bar_data (from market_data.get_candles) to a DataFrame with a
+    UTC DatetimeIndex and an ATR column.  Returns None if too few bars.
     """
     if not bar_data:
         return None
 
-    timestamps = bar_data.get("t", [])
-    if len(timestamps) < EMA_SLOW + 10:
-        log.warning(f"Only {len(timestamps)} bars — need {EMA_SLOW + 10}+ for reliable signals")
+    t = bar_data.get("t", [])
+    if len(t) < 60:
+        log.warning(f"Only {len(t)} bars — need 60+ for reliable signals")
         return None
 
     df = pd.DataFrame({
-        "time":   bar_data["t"],
+        "time":   t,
         "open":   pd.to_numeric(bar_data["o"], errors="coerce"),
         "high":   pd.to_numeric(bar_data["h"], errors="coerce"),
         "low":    pd.to_numeric(bar_data["l"], errors="coerce"),
         "close":  pd.to_numeric(bar_data["c"], errors="coerce"),
-        "volume": pd.to_numeric(bar_data.get("v", [0] * len(timestamps)), errors="coerce"),
+        "volume": pd.to_numeric(bar_data.get("v", [0] * len(t)), errors="coerce"),
     })
-
     df.sort_values("time", inplace=True)
     df.reset_index(drop=True, inplace=True)
     df.dropna(subset=["open", "high", "low", "close"], inplace=True)
 
-    df["ema_fast"] = _ema(df["close"], EMA_FAST)
-    df["ema_med"]  = _ema(df["close"], EMA_MED)
-    df["ema_slow"] = _ema(df["close"], EMA_SLOW)
-    df["atr"]      = _wilder_atr(df["high"], df["low"], df["close"], ATR_PERIOD)
+    # DatetimeIndex is required by session-filter strategies
+    df.index = pd.to_datetime(df["time"], unit="s", utc=True)
 
+    df["atr"] = lib.atr(df, ATR_PERIOD)
     return df
 
 
-# ── Signal generation ─────────────────────────────────────────────────────────
+# ── Signal ────────────────────────────────────────────────────────────────────
 
 def get_signal(df: pd.DataFrame) -> tuple[str | None, float, float, float]:
-    """
-    Analyse the last two completed bars.
-
-    Returns
-    -------
-    (signal, sl_price, tp_price, atr_value)
-    signal is "buy" or None.
-    """
-    if df is None or len(df) < EMA_SLOW + 5:
+    if df is None or len(df) < 60:
         return None, 0.0, 0.0, 0.0
 
-    # df.iloc[-1] is the *forming* candle — use [-2] (last completed) and [-3] (prev)
-    prev = df.iloc[-3]
-    last = df.iloc[-2]
+    strat = _build_strategy()
+    try:
+        entries = strat.signals(df)
+    except Exception as exc:
+        log.error(f"Strategy {STRATEGY_TYPE} raised: {exc}")
+        return None, 0.0, 0.0, 0.0
 
-    ema8_cross_up = (prev["ema_fast"] <= prev["ema_med"]) and (last["ema_fast"] > last["ema_med"])
-    trend_bullish  = (last["ema_fast"] > last["ema_slow"]) and (last["ema_med"] > last["ema_slow"])
+    last = df.iloc[-2]            # last *completed* bar
+    price   = float(last["close"])
+    atr_val = float(last["atr"])
 
-    entry_price = last["close"]
-    atr_val     = last["atr"]
+    if not (atr_val > 0):
+        return None, 0.0, 0.0, 0.0
 
-    if ema8_cross_up and trend_bullish:
-        sl = round(entry_price - ATR_SL_MULT * atr_val, 5)
-        tp = round(entry_price + ATR_TP_MULT * atr_val, 5)
+    go_long  = DIRECTION in ("long", "both")  and bool(entries["long_entry"].iloc[-2])
+    go_short = DIRECTION in ("short", "both") and bool(entries["short_entry"].iloc[-2])
+
+    if go_long:
+        sl = round(price - ATR_SL_MULT * atr_val, 5)
+        tp = round(price + ATR_TP_MULT * atr_val, 5)
         log.info(
-            f"SIGNAL BUY | price={entry_price:.5f} "
-            f"EMA8={last['ema_fast']:.5f} EMA21={last['ema_med']:.5f} EMA50={last['ema_slow']:.5f} "
-            f"ATR={atr_val:.5f} SL={sl:.5f} TP={tp:.5f}"
+            f"SIGNAL BUY [{STRATEGY_TYPE}] | price={price:.5f} ATR={atr_val:.5f} "
+            f"SL={sl:.5f} TP={tp:.5f}"
         )
         return "buy", sl, tp, round(atr_val, 5)
+
+    if go_short:
+        sl = round(price + ATR_SL_MULT * atr_val, 5)
+        tp = round(price - ATR_TP_MULT * atr_val, 5)
+        log.info(
+            f"SIGNAL SELL [{STRATEGY_TYPE}] | price={price:.5f} ATR={atr_val:.5f} "
+            f"SL={sl:.5f} TP={tp:.5f}"
+        )
+        return "sell", sl, tp, round(atr_val, 5)
 
     return None, 0.0, 0.0, round(atr_val, 5)

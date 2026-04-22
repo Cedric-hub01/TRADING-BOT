@@ -23,10 +23,13 @@ ROUTE_INFO    = 1864530      # info/quote route
 SYMBOL    = "EURUSD"
 TIMEFRAME = "5"          # 5-minute bars  (valid: "1","5","15","30","60","240","1D")
 
-# ── EMA crossover ─────────────────────────────────────────────────────────────
-EMA_FAST = 8
-EMA_MED  = 21
-EMA_SLOW = 50
+# ── Strategy selector (apply_best_strategy.py rewrites these 3 fields) ────────
+# STRATEGY_TYPE  : key in strategy._BUILDERS (e.g. "ema_cross", "supertrend"…)
+# STRATEGY_PARAMS: dict of params for that strategy
+# DIRECTION      : "long" | "short" | "both"
+STRATEGY_TYPE   = "ema_cross"
+STRATEGY_PARAMS = {"fast": 8, "med": 21, "slow": 50, "trend_filter": True}
+DIRECTION       = "long"
 
 # ── ATR ───────────────────────────────────────────────────────────────────────
 ATR_PERIOD  = 14

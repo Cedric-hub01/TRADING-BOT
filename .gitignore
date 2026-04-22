@@ -8,6 +8,12 @@ bot.log
 open_trade.json
 risk_state.json
 
+# Backtest artifacts (generated locally)
+backtest_results.csv
+backtest_top10.json
+best_strategy.json
+config.py.bak
+
 # Virtualenvs
 .venv/
 venv/
