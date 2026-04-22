@@ -23,8 +23,9 @@ from datetime import datetime
 
 from config import SCAN_INTERVAL, CANDLES_NEEDED, SYMBOL, TIMEFRAME, LOT_SIZE
 from tradelocker import TradeLockerAPI
-from strategy  import build_dataframe, get_signal
-from risk      import RiskManager
+from strategy    import build_dataframe, get_signal
+from risk        import RiskManager
+import market_data
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -143,10 +144,10 @@ def run():
             if saved:
                 _handle_closed_trade(saved, risk)
 
-            # ── 3. Fetch candles ───────────────────────────────────────────────
-            bar_data = api.get_candles(TIMEFRAME, CANDLES_NEEDED)
+            # ── 3. Fetch candles from Yahoo Finance (RisenFX history is broken) ──
+            bar_data = market_data.get_candles(TIMEFRAME, CANDLES_NEEDED)
             if bar_data is None:
-                log.warning(f"[{ts}] No candle data returned — will retry next cycle")
+                log.warning(f"[{ts}] No candle data from Yahoo Finance — will retry next cycle")
                 _sleep_remainder(loop_start)
                 continue
 

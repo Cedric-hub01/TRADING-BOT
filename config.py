@@ -2,10 +2,12 @@
 # CONFIGURATION  —  edit the three lines marked UPDATE to switch brokers
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ── Broker credentials ────────────────────────────────────────────────────────
-EMAIL    = "your@email.com"          # UPDATE — TradeLocker demo account email
-PASSWORD = "your_password"           # UPDATE — TradeLocker demo account password
-SERVER   = "OSP-DEMO"                # UPDATE — server tag shown on broker login page
+# ── RisenFX credentials ───────────────────────────────────────────────────────
+# Candle history is broken on RisenFX — bot uses Yahoo Finance for candles.
+# RisenFX is used ONLY for: login, place orders, get positions.
+EMAIL    = "your@email.com"          # UPDATE — your RisenFX login email
+PASSWORD = "your_password"           # UPDATE — your RisenFX login password
+SERVER   = "RisenFX-Demo"            # UPDATE — exact server tag from RisenFX login page
 
 # ── TradeLocker REST base ─────────────────────────────────────────────────────
 BASE_URL = "https://demo.tradelocker.com/backend-api"
