@@ -10,6 +10,16 @@ SERVER   = "RISENFX"
 # ── TradeLocker REST base ─────────────────────────────────────────────────────
 BASE_URL = "https://demo.tradelocker.com/backend-api"
 
+# ── Twelve Data (real-time candles, primary feed) ─────────────────────────────
+# Yahoo Finance has a ~15-minute delay which is fatal for 1-min trading.  Twelve
+# Data serves real-time EURUSD candles.  Get a free API key at
+# https://twelvedata.com/ and paste it below.
+#
+# Free plan: 8 req/min, 800 req/day.  Scanning every 60 s = 1440 req/day, so the
+# bot WILL hit the daily cap after ~13 h of uptime — at that point market_data
+# transparently falls back to Yahoo.  Leave this empty to force Yahoo-only mode.
+TWELVE_DATA_API_KEY = ""
+
 # ── Hard-coded account / instrument IDs (RisenFX demo) ────────────────────────
 # Discovery endpoints work, but hard-coding avoids a round-trip every start-up
 # and guarantees we hit the correct account/route combo for EURUSD.E.
