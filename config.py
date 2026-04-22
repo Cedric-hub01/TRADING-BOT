@@ -1,16 +1,23 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# CONFIGURATION  —  edit the three lines marked UPDATE to switch brokers
+# CONFIGURATION  —  RisenFX demo account  (TradeLocker backend)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── RisenFX credentials ───────────────────────────────────────────────────────
-# Candle history is broken on RisenFX — bot uses Yahoo Finance for candles.
-# RisenFX is used ONLY for: login, place orders, get positions.
-EMAIL    = "your@email.com"          # UPDATE — your RisenFX login email
-PASSWORD = "your_password"           # UPDATE — your RisenFX login password
-SERVER   = "RisenFX-Demo"            # UPDATE — exact server tag from RisenFX login page
+EMAIL    = "hatgkcedric2@gmail.com"
+PASSWORD = "Cedric12$$"
+SERVER   = "RISENFX"
 
 # ── TradeLocker REST base ─────────────────────────────────────────────────────
 BASE_URL = "https://demo.tradelocker.com/backend-api"
+
+# ── Hard-coded account / instrument IDs (RisenFX demo) ────────────────────────
+# Discovery endpoints work, but hard-coding avoids a round-trip every start-up
+# and guarantees we hit the correct account/route combo for EURUSD.E.
+ACCOUNT_ID    = 2111100      # internal account id
+ACC_NUM       = 2            # value for the `accNum` header
+INSTRUMENT_ID = 18670        # EURUSD.E tradableInstrumentId
+ROUTE_TRADE   = 1864547      # execution route
+ROUTE_INFO    = 1864530      # info/quote route
 
 # ── Instrument ────────────────────────────────────────────────────────────────
 SYMBOL    = "EURUSD"
@@ -23,8 +30,8 @@ EMA_SLOW = 50
 
 # ── ATR ───────────────────────────────────────────────────────────────────────
 ATR_PERIOD  = 14
-ATR_SL_MULT = 1.5    # stop-loss  = entry − 1.5 × ATR
-ATR_TP_MULT = 3.0    # take-profit = entry + 3.0 × ATR  (3:1 RR)
+ATR_SL_MULT = 1.5    # stop-loss   = entry − 1.5 × ATR
+ATR_TP_MULT = 3.0    # take-profit = entry + 3.0 × ATR  (2:1 RR)
 
 # ── Position sizing ───────────────────────────────────────────────────────────
 LOT_SIZE = 0.05      # standard lots
@@ -36,9 +43,9 @@ DAILY_TARGET        =  50.0   # USD — halt trading for the day
 MAX_CONSEC_LOSSES   =   3     # consecutive losses before pausing
 
 # ── Loop ──────────────────────────────────────────────────────────────────────
-SCAN_INTERVAL  = 60    # seconds between scans
-CANDLES_NEEDED = 120   # how many bars to fetch (need 50+ for EMA50; 120 = buffer)
+SCAN_INTERVAL  = 60    # seconds between scans  (also the SL/TP monitor interval)
+CANDLES_NEEDED = 120   # bars to fetch (need 50+ for EMA50; 120 = buffer)
 
-# ── EURUSD pip/USD constants ──────────────────────────────────────────────────
+# ── EURUSD pip / USD constants ────────────────────────────────────────────────
 PIP_SIZE       = 0.0001
 PIP_VALUE_STD  = 10.0   # USD per pip per 1.0 standard lot

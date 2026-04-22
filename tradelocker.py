@@ -1,33 +1,41 @@
 """
-TradeLocker REST API client.
+TradeLocker REST API client  —  RisenFX demo.
 
-Handles authentication, token refresh, account/instrument discovery,
-candle history, and order placement (market + stop + limit).
+Account, instrument, and routes are hard-coded from config.  The client only
+exposes the operations we actually use:
+
+    • login / refresh
+    • get_positions
+    • place_market_order       (entry + emergency close)
+    • close_position           (market SELL of the open long position)
+
+Pending stop / limit orders are intentionally NOT used because RisenFX cannot
+attach them to a market fill as real SL/TP — the bot monitors price itself and
+closes via market SELL when SL or TP is breached.
 """
 
-import time
 import logging
 import requests
 
-from config import EMAIL, PASSWORD, SERVER, BASE_URL, SYMBOL
+from config import (
+    EMAIL, PASSWORD, SERVER, BASE_URL,
+    ACCOUNT_ID, ACC_NUM, INSTRUMENT_ID, ROUTE_TRADE,
+)
 
 log = logging.getLogger(__name__)
-
-# How many seconds before a 401 triggers a token refresh retry
-_RETRY_ON_401 = True
 
 
 class TradeLockerAPI:
     def __init__(self):
         self.access_token  = None
         self.refresh_token = None
-        self.account_id    = None   # internal numeric ID
-        self.account_no    = None   # accNum header value
-        self.instrument_id = None
-        self.route_id      = None
+        self.account_id    = ACCOUNT_ID
+        self.account_no    = ACC_NUM
+        self.instrument_id = INSTRUMENT_ID
+        self.route_id      = ROUTE_TRADE
         self._session      = requests.Session()
 
-    # ── Auth ─────────────────────────────────────────────────────────────────
+    # ── Auth ──────────────────────────────────────────────────────────────────
 
     def login(self):
         resp = self._session.post(
@@ -57,13 +65,11 @@ class TradeLockerAPI:
     # ── Internal helpers ──────────────────────────────────────────────────────
 
     def _headers(self):
-        h = {
+        return {
             "Authorization": f"Bearer {self.access_token}",
             "Content-Type":  "application/json",
+            "accNum":        str(self.account_no),
         }
-        if self.account_no is not None:
-            h["accNum"] = str(self.account_no)
-        return h
 
     @staticmethod
     def _raise(resp, label="request"):
@@ -91,105 +97,16 @@ class TradeLockerAPI:
         self._raise(resp, f"POST {path}")
         return resp.json()
 
-    # ── Account / Instrument discovery ───────────────────────────────────────
-
-    def get_accounts(self):
-        data = self._get("/trade/accounts")
-        return data["d"]["accounts"]
-
-    def get_instruments(self):
-        data = self._get(
-            f"/trade/accounts/{self.account_id}/instruments",
-            params={"locale": "en"},
-        )
-        return data["d"]["instruments"]
+    # ── Setup (no-op — IDs are hard-coded) ────────────────────────────────────
 
     def setup(self, symbol=None):
-        """Resolve account_id, account_no, instrument_id, route_id."""
-        symbol = symbol or SYMBOL
-
-        accounts = self.get_accounts()
-        if not accounts:
-            raise RuntimeError("No trading accounts found on this server")
-
-        # Prefer live/demo account; fallback to first
-        account = accounts[0]
-        self.account_id = account["id"]
-        # accNum can live under several field names depending on broker
-        self.account_no = (
-            account.get("accNum")
-            or account.get("accountNo")
-            or account.get("number")
-            or str(self.account_id)
-        )
-        log.info(f"Account: id={self.account_id}  accNum={self.account_no}")
-
-        instruments = self.get_instruments()
-        needle = symbol.replace("/", "").replace(" ", "").upper()
-
-        for inst in instruments:
-            name = (
-                inst.get("name", "")
-                or inst.get("description", "")
-                or inst.get("symbol", "")
-            )
-            if needle in name.replace("/", "").replace(" ", "").upper():
-                self.instrument_id = (
-                    inst.get("tradableInstrumentId")
-                    or inst.get("id")
-                )
-                routes = inst.get("routes", [])
-                self.route_id = routes[0]["id"] if routes else 1
-                log.info(
-                    f"Instrument: {name}  id={self.instrument_id}  routeId={self.route_id}"
-                )
-                return
-
-        available = [
-            inst.get("name") or inst.get("description") or "?"
-            for inst in instruments[:30]
-        ]
-        raise RuntimeError(
-            f"{symbol} not found in instrument list.\n"
-            f"Available (first 30): {available}"
+        log.info(
+            f"Using hard-coded RisenFX config: account={self.account_id} "
+            f"accNum={self.account_no} instrument={self.instrument_id} "
+            f"route={self.route_id}"
         )
 
-    # ── Market data ───────────────────────────────────────────────────────────
-
-    def get_candles(self, resolution, count=120):
-        """
-        Fetch OHLCV bars.  Returns the raw barData dict:
-            {"o": [...], "h": [...], "l": [...], "c": [...], "v": [...], "t": [...]}
-        or None on failure.
-        """
-        now   = int(time.time())
-        # resolution is in minutes for numeric strings; for "1D" assume 1440
-        try:
-            res_mins = int(resolution)
-        except ValueError:
-            res_mins = 1440
-
-        # Request 2× the needed window to guarantee enough bars
-        start = now - (count * res_mins * 60 * 2)
-
-        params = {
-            "instrumentId":   self.instrument_id,
-            "resolution":     resolution,
-            "startTimestamp": start,
-            "endTimestamp":   now,
-        }
-
-        try:
-            data = self._get("/trade/history", params=params)
-            bar_data = data.get("d", {}).get("barData", {})
-            n = len(bar_data.get("t", []))
-            log.debug(f"Fetched {n} candles (resolution={resolution})")
-            return bar_data if n > 0 else None
-        except Exception as exc:
-            log.error(f"get_candles failed: {exc}")
-            return None
-
-    # ── Positions / Orders ────────────────────────────────────────────────────
+    # ── Positions ─────────────────────────────────────────────────────────────
 
     def get_positions(self):
         try:
@@ -199,13 +116,33 @@ class TradeLockerAPI:
             log.error(f"get_positions failed: {exc}")
             return []
 
-    def get_orders(self):
-        try:
-            data = self._get(f"/trade/accounts/{self.account_id}/orders")
-            return data.get("d", {}).get("orders", [])
-        except Exception as exc:
-            log.error(f"get_orders failed: {exc}")
-            return []
+    def get_open_position(self):
+        """Return the single open EURUSD.E position dict, or None."""
+        for pos in self.get_positions():
+            inst_id = (
+                pos.get("tradableInstrumentId")
+                or pos.get("instrumentId")
+                or pos.get("id")
+            )
+            qty = float(pos.get("qty", 0) or pos.get("size", 0) or 0)
+            if inst_id == self.instrument_id and qty > 0:
+                return pos
+        return None
+
+    @staticmethod
+    def position_qty(pos: dict) -> float:
+        return float(pos.get("qty", 0) or pos.get("size", 0) or 0)
+
+    @staticmethod
+    def position_side(pos: dict) -> str:
+        side = (pos.get("side") or "").lower()
+        if side in ("buy", "long"):
+            return "buy"
+        if side in ("sell", "short"):
+            return "sell"
+        return "buy"   # RisenFX demo only trades long from this bot
+
+    # ── Orders ────────────────────────────────────────────────────────────────
 
     def place_market_order(self, side: str, qty: float) -> dict:
         body = {
@@ -219,28 +156,14 @@ class TradeLockerAPI:
         log.info(f"Market order → {body}")
         return self._post(f"/trade/accounts/{self.account_id}/orders", body)
 
-    def place_stop_order(self, side: str, qty: float, stop_price: float) -> dict:
-        body = {
-            "qty":          qty,
-            "instrumentId": self.instrument_id,
-            "side":         side,
-            "type":         "stop",
-            "stopPrice":    round(stop_price, 5),
-            "validity":     "GTC",
-            "routeId":      self.route_id,
-        }
-        log.info(f"Stop order → {body}")
-        return self._post(f"/trade/accounts/{self.account_id}/orders", body)
-
-    def place_limit_order(self, side: str, qty: float, limit_price: float) -> dict:
-        body = {
-            "qty":          qty,
-            "instrumentId": self.instrument_id,
-            "side":         side,
-            "type":         "limit",
-            "price":        round(limit_price, 5),
-            "validity":     "GTC",
-            "routeId":      self.route_id,
-        }
-        log.info(f"Limit order → {body}")
-        return self._post(f"/trade/accounts/{self.account_id}/orders", body)
+    def close_position(self, pos: dict) -> dict:
+        """
+        Close the supplied open position by sending an opposite-side market
+        order for its full quantity.  Because RisenFX demo does not support
+        attached SL/TP, this is how the bot realises SL or TP hits.
+        """
+        qty  = self.position_qty(pos)
+        side = self.position_side(pos)
+        opposite = "sell" if side == "buy" else "buy"
+        log.info(f"Closing position (orig side={side}, qty={qty}) via market {opposite}")
+        return self.place_market_order(side=opposite, qty=qty)

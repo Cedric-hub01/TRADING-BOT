@@ -1,9 +1,11 @@
 """
-Candle data from Yahoo Finance — used as a drop-in replacement for the
-broken RisenFX history endpoint.
+Candle + tick data from Yahoo Finance  —  drop-in replacement for the broken
+RisenFX history endpoint.
 
-Returns bar_data in the same dict format the rest of the bot expects:
-    {"t": [...], "o": [...], "h": [...], "l": [...], "c": [...], "v": [...]}
+Exports
+-------
+get_candles(timeframe, count)  → bar_data dict or None
+get_current_price()            → latest EURUSD mid (float) or None
 """
 
 import logging
@@ -36,18 +38,13 @@ _PERIOD_MAP = {
 }
 
 
+# ── OHLCV bars ────────────────────────────────────────────────────────────────
+
 def get_candles(timeframe: str = "5", count: int = 120) -> dict | None:
     """
     Fetch OHLCV candles for EURUSD from Yahoo Finance.
 
-    Parameters
-    ----------
-    timeframe : str  — one of "1","5","15","30","60","240","1D"
-    count     : int  — how many of the most recent completed bars to return
-
-    Returns
-    -------
-    bar_data dict or None on failure.
+    Returns bar_data dict  {"t","o","h","l","c","v"}  or None on failure.
     """
     interval = _INTERVAL_MAP.get(str(timeframe), "5m")
     period   = _PERIOD_MAP.get(interval, "5d")
@@ -62,7 +59,7 @@ def get_candles(timeframe: str = "5", count: int = 120) -> dict | None:
 
         df = df.dropna(subset=["Open", "High", "Low", "Close"])
 
-        # Drop the last (still-forming) bar if using intraday
+        # Drop the still-forming bar for intraday intervals
         if interval != "1d":
             df = df.iloc[:-1]
 
@@ -72,7 +69,6 @@ def get_candles(timeframe: str = "5", count: int = 120) -> dict | None:
             log.warning(f"yfinance: only {len(df)} bars after filtering — need 55+")
             return None
 
-        # Convert pandas Timestamp index → Unix seconds (int)
         timestamps = [int(ts.timestamp()) for ts in df.index]
 
         bar_data = {
@@ -89,4 +85,29 @@ def get_candles(timeframe: str = "5", count: int = 120) -> dict | None:
 
     except Exception as exc:
         log.error(f"yfinance error: {exc}")
+        return None
+
+
+# ── Current price (for SL/TP monitor) ─────────────────────────────────────────
+
+def get_current_price() -> float | None:
+    """
+    Return the latest EURUSD price for the price-monitoring SL/TP loop.
+
+    Pulls the most recent 1-minute bar and uses its close.  Yahoo lags spot
+    by a few seconds but is accurate enough for a 60 s monitor.
+    """
+    try:
+        ticker = yf.Ticker(_YF_SYMBOL)
+        df = ticker.history(period="1d", interval="1m")
+        if df is None or df.empty:
+            log.warning("yfinance: no 1m bars when fetching current price")
+            return None
+        price = float(df["Close"].dropna().iloc[-1])
+        if price <= 0:
+            log.warning(f"yfinance: invalid price {price}")
+            return None
+        return price
+    except Exception as exc:
+        log.error(f"get_current_price error: {exc}")
         return None
