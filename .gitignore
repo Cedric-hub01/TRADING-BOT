@@ -1,0 +1,14 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Bot runtime state (per-machine, should not be versioned)
+bot.log
+open_trade.json
+risk_state.json
+
+# Virtualenvs
+.venv/
+venv/
+env/
