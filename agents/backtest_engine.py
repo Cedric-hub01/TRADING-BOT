@@ -48,7 +48,7 @@ UNIT_VALUE          = LOT_SIZE * CONTRACT_SIZE   # $/point → $3.00
 MAX_RISK_PER_TRADE  = 30.0          # hard cap; trades exceeding 2× are skipped
 
 # ── File paths ─────────────────────────────────────────────────────────────────
-DATA_FILE   = os.path.join(_REPO_ROOT, "xauusd_1m.csv")
+DATA_FILE   = os.path.join(_REPO_ROOT, "xauusd_5m.csv")
 OUTPUT_FILE = os.path.join(_REPO_ROOT, "backtest_results.csv")
 
 # ── Split ratios ───────────────────────────────────────────────────────────────
@@ -226,9 +226,9 @@ def compute_metrics(trades: pd.DataFrame) -> dict:
     peak     = np.maximum.accumulate(equity)
     max_dd   = round(float((peak - equity).max()), 2)
 
-    # Daily aggregation
+    # Daily aggregation — group by calendar date extracted from exit_time
     tmp = trades.copy()
-    tmp["date"] = pd.to_datetime(tmp["exit_time"]).dt.date
+    tmp["date"] = pd.to_datetime(tmp["exit_time"]).dt.strftime("%Y-%m-%d")
     daily = tmp.groupby("date")["pnl_usd"].sum()
 
     avg_daily = round(float(daily.mean()), 2)      if len(daily)  > 0 else 0.0

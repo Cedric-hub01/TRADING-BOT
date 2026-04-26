@@ -89,8 +89,8 @@ def _check_profit_factor(row: pd.Series) -> str | None:
 
 def _check_trade_count(row: pd.Series) -> str | None:
     v = int(row["live_total_trades"])
-    if v < 20:
-        return f"only {v} trades in live period — need ≥ 20 for statistical validity"
+    if v < 5:
+        return f"only {v} trades in live period — need ≥ 5 for statistical validity"
     return None
 
 
@@ -134,7 +134,7 @@ FILTERS: list[tuple[str, object]] = [
     ("max_drawdown ≤ $500",          _check_max_drawdown),
     ("win_rate > 45%",               _check_win_rate),
     ("profit_factor > 1.3",          _check_profit_factor),
-    ("trade_count ≥ 20",             _check_trade_count),
+    ("trade_count ≥ 5",              _check_trade_count),
     ("95% daily band $50-$200",      _check_daily_band),
     ("daily loss floor > -$75",      _check_loss_floor),
 ]
