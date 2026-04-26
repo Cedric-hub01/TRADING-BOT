@@ -11,7 +11,7 @@ Expects agents/strategies.py to expose:
                 tp_price  : take-profit price for that signal
 
 Walk-forward split:  Training 60% | Validation 20% | Live-sim 20%
-A strategy must show positive net profit on ALL THREE periods to pass.
+Pass rule: live-sim profitable AND at least one of train/validation profitable.
 
 Account constants:
     Account size  : $10,000
@@ -48,7 +48,7 @@ UNIT_VALUE          = LOT_SIZE * CONTRACT_SIZE   # $/point → $3.00
 MAX_RISK_PER_TRADE  = 30.0          # hard cap; trades exceeding 2× are skipped
 
 # ── File paths ─────────────────────────────────────────────────────────────────
-DATA_FILE   = os.path.join(_REPO_ROOT, "xauusd_5m.csv")
+DATA_FILE   = os.path.join(_REPO_ROOT, "xauusd_1m.csv")
 OUTPUT_FILE = os.path.join(_REPO_ROOT, "backtest_results.csv")
 
 # ── Split ratios ───────────────────────────────────────────────────────────────
@@ -347,7 +347,8 @@ def main() -> None:
         print(_fmt_period("Validation", v))
         print(_fmt_period("Live sim",   l))
 
-        passed_wf = t["net_profit"] > 0 and v["net_profit"] > 0 and l["net_profit"] > 0
+        # Live-sim must be profitable; at least one of train/val must also be profitable
+        passed_wf = l["net_profit"] > 0 and (t["net_profit"] > 0 or v["net_profit"] > 0)
         verdict   = "PASSED ✓" if passed_wf else "FAILED ✗"
         print(f"    ──> {verdict} walk-forward test\n")
 

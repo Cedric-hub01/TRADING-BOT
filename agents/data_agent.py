@@ -26,9 +26,11 @@ SYMBOL    = "XAU/USD"
 OUTPUTSIZE = 5000
 CACHE_TTL  = 3600   # seconds — re-download if file older than this
 
-# interval label → (api param, output filename)
+# How many paginated 1m requests to make (10 × 5000 ≈ 50,000 bars / ~35 days)
+NUM_1M_REQUESTS = 10
+
+# interval label → output filename  (1m handled separately via pagination)
 TIMEFRAMES = {
-    "1min":  "xauusd_1m.csv",
     "5min":  "xauusd_5m.csv",
     "15min": "xauusd_15m.csv",
 }
@@ -64,10 +66,11 @@ def _is_cache_fresh(filepath: str) -> bool:
     return age < CACHE_TTL
 
 
-def _fetch_bars(interval: str) -> pd.DataFrame:
+def _fetch_bars(interval: str, end_date: str | None = None) -> pd.DataFrame:
     """
-    Call the Twelve Data time_series endpoint for SYMBOL at the given interval.
-    Retries automatically on rate-limit errors (HTTP 429 or status 'error').
+    Single request to Twelve Data time_series.
+    *end_date* (optional) is a 'YYYY-MM-DD HH:MM:SS' string that caps the
+    newest bar returned — used for backwards pagination.
     Returns a DataFrame with columns: datetime, open, high, low, close, volume.
     """
     params = {
@@ -77,6 +80,8 @@ def _fetch_bars(interval: str) -> pd.DataFrame:
         "apikey":     API_KEY,
         "format":     "JSON",
     }
+    if end_date:
+        params["end_date"] = end_date
 
     while True:
         _throttle()
@@ -123,9 +128,57 @@ def _fetch_bars(interval: str) -> pd.DataFrame:
         return df[["datetime", "open", "high", "low", "close", "volume"]]
 
 
+def _fetch_1m_paginated(output_path: str) -> pd.DataFrame:
+    """
+    Collect ~50,000 bars of 1m XAU/USD data via NUM_1M_REQUESTS backwards-
+    paginated requests.  Each request asks for OUTPUTSIZE bars ending just
+    before the earliest bar received in the previous batch.
+    Deduplicates, sorts, and saves to *output_path*.
+    """
+    print(f"  Fetching XAU/USD 1m data "
+          f"({NUM_1M_REQUESTS} requests × {OUTPUTSIZE:,} bars target) …")
+
+    all_batches: list[pd.DataFrame] = []
+    end_date: str | None = None   # first request: no cap → returns latest bars
+
+    for req_num in range(1, NUM_1M_REQUESTS + 1):
+        suffix = f" end_date={end_date}" if end_date else " (latest)"
+        print(f"    Request {req_num}/{NUM_1M_REQUESTS}{suffix}")
+        try:
+            batch = _fetch_bars("1min", end_date=end_date)
+        except RuntimeError as exc:
+            print(f"    Request {req_num} failed: {exc} — stopping early")
+            break
+
+        if batch.empty:
+            print("    Empty response — stopping early")
+            break
+
+        all_batches.append(batch)
+
+        # Step backwards: cap next request 1 minute before this batch's earliest bar
+        earliest = batch["datetime"].min()
+        end_date = (earliest - pd.Timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+
+    if not all_batches:
+        raise RuntimeError("All 1m paginated requests failed — no data collected")
+
+    df = pd.concat(all_batches, ignore_index=True)
+    df.drop_duplicates(subset=["datetime"], inplace=True)
+    df.sort_values("datetime", inplace=True)
+    df.reset_index(drop=True, inplace=True)
+
+    df.to_csv(output_path, index=False)
+    print(f"  Combined: {len(df):,} bars  "
+          f"({df['datetime'].iloc[0]}  →  {df['datetime'].iloc[-1]})")
+    print(f"  Saved to {output_path}")
+    return df
+
+
 def fetch_timeframe(interval: str, output_path: str) -> pd.DataFrame:
     """
     Fetch one timeframe, respecting the cache.
+    1m uses paginated multi-request fetch; 5m/15m use a single request.
     Prints progress and saves to *output_path*.
     Returns the resulting DataFrame.
     """
@@ -135,6 +188,9 @@ def fetch_timeframe(interval: str, output_path: str) -> pd.DataFrame:
         age_min = (time.time() - os.path.getmtime(output_path)) / 60
         print(f"  [{label}] Cache is {age_min:.1f} min old — using {output_path}")
         return pd.read_csv(output_path, parse_dates=["datetime"])
+
+    if interval == "1min":
+        return _fetch_1m_paginated(output_path)
 
     print(f"  Fetching XAU/USD {label} data …")
     df = _fetch_bars(interval)
@@ -147,13 +203,21 @@ def fetch_timeframe(interval: str, output_path: str) -> pd.DataFrame:
 def run(output_dir: str = ".") -> dict[str, pd.DataFrame]:
     """
     Fetch all three timeframes.
-    *output_dir* controls where the CSV files are written.
+    1m: 10 paginated requests → ~50,000 bars saved to xauusd_1m.csv.
+    5m/15m: single request → xauusd_5m.csv / xauusd_15m.csv.
     Returns a dict mapping interval labels to DataFrames:
         {"1m": df_1m, "5m": df_5m, "15m": df_15m}
     """
     os.makedirs(output_dir, exist_ok=True)
     results: dict[str, pd.DataFrame] = {}
 
+    # 1m — paginated deep fetch
+    path_1m = os.path.join(output_dir, "xauusd_1m.csv")
+    df_1m   = fetch_timeframe("1min", path_1m)
+    results["1m"] = df_1m
+    print(f"  Done  [1m]: {len(df_1m):,} rows\n")
+
+    # 5m and 15m — single request each
     for interval, filename in TIMEFRAMES.items():
         filepath = os.path.join(output_dir, filename)
         label    = interval.replace("min", "m")
