@@ -193,6 +193,16 @@ def main() -> None:
     df_all = pd.read_csv(INPUT_FILE)
     print(f"Loaded {len(df_all):,} rows from {INPUT_FILE}")
 
+    if "passed_walkforward" not in df_all.columns:
+        print(
+            "\nERROR: 'passed_walkforward' column not found in backtest_results.csv.\n"
+            "This file was produced by a different or older run.\n"
+            "Fix: delete backtest_results.csv and re-run backtest_engine.py\n"
+            "  rm backtest_results.csv\n"
+            "  python agents/backtest_engine.py"
+        )
+        sys.exit(1)
+
     # Keep only strategies that passed walk-forward testing
     df = df_all[df_all["passed_walkforward"] == True].copy()   # noqa: E712
     print(f"Walk-forward passed: {len(df)} / {len(df_all)}\n")

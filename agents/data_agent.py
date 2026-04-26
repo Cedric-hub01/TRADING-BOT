@@ -103,10 +103,15 @@ def _fetch_bars(interval: str) -> pd.DataFrame:
             raise RuntimeError(f"No 'values' key in response for {interval}: {data}")
 
         df = pd.DataFrame(values)
-        df.rename(columns={"datetime": "datetime"}, inplace=True)
         df["datetime"] = pd.to_datetime(df["datetime"])
-        for col in ("open", "high", "low", "close", "volume"):
+        for col in ("open", "high", "low", "close"):
             df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        # XAU/USD on Twelve Data free tier does not include volume — default to 0
+        if "volume" in df.columns:
+            df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0)
+        else:
+            df["volume"] = 0
 
         # Twelve Data returns newest-first; reverse to chronological order
         df.sort_values("datetime", inplace=True)

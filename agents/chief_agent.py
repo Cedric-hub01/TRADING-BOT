@@ -168,7 +168,7 @@ def update_config(best_row: pd.Series, best_name: str) -> bool:
     Returns True on success.
     """
     try:
-        with open(CONFIG_FILE, "r") as fh:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as fh:
             original = fh.read()
 
         params = {
@@ -203,7 +203,7 @@ def update_config(best_row: pd.Series, best_name: str) -> bool:
         if marker in original:
             original = original[: original.index(marker)].rstrip() + "\n"
 
-        with open(CONFIG_FILE, "w") as fh:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as fh:
             fh.write(original + new_block)
 
         return True
@@ -267,7 +267,7 @@ def write_top3_json(propfirm_df: pd.DataFrame, backtest_df: pd.DataFrame | None)
                 }
         top3.append(entry)
 
-    with open(TOP3_FILE, "w") as fh:
+    with open(TOP3_FILE, "w", encoding="utf-8") as fh:
         json.dump(top3, fh, indent=2)
 
     return top3
@@ -276,7 +276,7 @@ def write_top3_json(propfirm_df: pd.DataFrame, backtest_df: pd.DataFrame | None)
 def write_10day_sim(propfirm_df: pd.DataFrame) -> str:
     """Write 10day_simulation.txt for the #1 strategy. Returns the strategy name."""
     if propfirm_df.empty:
-        with open(SIM_FILE, "w") as fh:
+        with open(SIM_FILE, "w", encoding="utf-8") as fh:
             fh.write("No strategies available for simulation.\n")
         return ""
 
@@ -284,7 +284,7 @@ def write_10day_sim(propfirm_df: pd.DataFrame) -> str:
     name = str(row["strategy"])
     table = _build_sim_table(row, name)
 
-    with open(SIM_FILE, "w") as fh:
+    with open(SIM_FILE, "w", encoding="utf-8") as fh:
         fh.write("10-DAY PROP-FIRM WITHDRAWAL SIMULATION\n")
         fh.write("=" * 60 + "\n\n")
         fh.write(table + "\n")
@@ -389,7 +389,7 @@ def write_full_report(
         exists = "✅" if os.path.isfile(f) else "❌"
         lines.append(f"  {exists}  {os.path.relpath(f, _REPO_ROOT)}")
 
-    with open(REPORT_FILE, "w") as fh:
+    with open(REPORT_FILE, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
 
 
