@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Runtime / generated files
+*.log
+open_trade.json
+risk_state.json
+
+# Research outputs (large / regenerated each run)
+xauusd_1m.csv
+xauusd_5m.csv
+xauusd_15m.csv
+backtest_results.csv
+risk_approved.csv
+propfirm_results.csv
+full_research_report.txt
+top3_strategies.json
+10day_simulation.txt
+
+# OS
+.DS_Store
+Thumbs.db
