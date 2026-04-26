@@ -11,10 +11,13 @@ Rate limits: max 8 requests/min on the free tier; auto-retries after 60 s.
 """
 
 import os
+import sys
 import time
 import datetime
 import requests
 import pandas as pd
+
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 # ── Config ────────────────────────────────────────────────────────────────────
 API_KEY   = "4d8062e470974365b29476f041a400b8"

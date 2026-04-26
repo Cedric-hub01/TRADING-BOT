@@ -27,6 +27,8 @@ import math
 import numpy as np
 import pandas as pd
 
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
 # ── Path setup ─────────────────────────────────────────────────────────────────
 _HERE      = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_HERE)
