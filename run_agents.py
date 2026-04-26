@@ -16,8 +16,16 @@ def _run(rel: str) -> bool:
     return subprocess.run([sys.executable, os.path.join(_ROOT, rel)], cwd=_ROOT).returncode == 0
 
 
+def _importable(pkg: str) -> bool:
+    try:
+        __import__(pkg)
+        return True
+    except ImportError:
+        return False
+
+
 def _check() -> None:
-    bad_pkgs  = [p for p in ("requests", "pandas", "numpy") if not __import__("importlib").util.find_spec(p)]
+    bad_pkgs  = [p for p in ("requests", "pandas", "numpy") if not _importable(p)]
     bad_files = [f for f in _AGENTS if not os.path.isfile(os.path.join(_ROOT, f))]
     if bad_pkgs:
         print("Missing packages — run:  pip install " + " ".join(bad_pkgs))
